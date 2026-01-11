@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -21,44 +22,41 @@
             font-family: "微软雅黑", Arial, sans-serif;
             color: #ffffff;
             padding: 10px;
-            touch-action: none; /* 禁止浏览器默认触控行为（如缩放） */
+            touch-action: none;
+            /* 禁止浏览器默认触控行为（如缩放） */
         }
 
         /* 响应式黑板容器：适配手机屏幕 */
         #boardContainer {
             position: relative;
-            padding: 15px; /* 手机端缩小边框 */
+            padding: 15px;
+            /* 手机端缩小边框 */
             background: #4a3c28;
             border-radius: 8px;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
             overflow: hidden;
-            /* 宽度自适应：最大800px，最小占满屏幕 */
-            width: 100%;
-            max-width: 800px;
+           
         }
 
         /* 响应式画布：宽度自适应，高度按比例缩放 */
         #chalkBoard {
             display: block;
-            width: 100%; /* 宽度占满容器 */
-            height: auto; /* 高度自适应 */
-            aspect-ratio: 4 / 3; /* 保持 800:600 的比例 */
             background: #14191e;
             cursor: none !important;
-            box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.5);
         }
 
         /* 粉笔指针：手机端大小适配 */
         #chalkCursor {
             position: absolute;
-            width: 6px;   /* 手机端缩小粉笔宽度 */
-            height: 25px; /* 手机端缩小粉笔长度 */
+            width: 6px;
+            /* 手机端缩小粉笔宽度 */
+            height: 25px;
+            /* 手机端缩小粉笔长度 */
             background: #f0f0e6;
             border-radius: 0 0 2px 2px;
-            background-image: linear-gradient(90deg, 
-                transparent 0%, 
-                rgba(0,0,0,0.05) 50%, 
-                transparent 100%);
+            background-image: linear-gradient(90deg,
+                    transparent 0%,
+                    rgba(0, 0, 0, 0.05) 50%,
+                    transparent 100%);
             clip-path: polygon(15% 0, 85% 0, 100% 100%, 0 100%);
             transform: translate(-50%, 0) rotate(-18deg);
             pointer-events: none;
@@ -92,6 +90,7 @@
         }
     </style>
 </head>
+
 <body>
     <div id="boardContainer">
         <canvas id="chalkBoard" width="900" height="500"></canvas>
@@ -106,7 +105,13 @@
     <div class="mobile-tip">手机建议横屏使用，体验更佳</div>
 
     <script>
+        // 获取可视区宽度（不含滚动条）
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        // 获取可视区高度（不含滚动条）
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
         const canvas = document.getElementById('chalkBoard');
+        canvas.width = viewportWidth-30;
+        canvas.height = viewportHeight-30;
         const ctx = canvas.getContext('2d');
         const boardContainer = document.getElementById('boardContainer');
         const chalkCursor = document.getElementById('chalkCursor');
@@ -170,12 +175,12 @@
             const dx = p2.x - p1.x;
             const dy = p2.y - p1.y;
             if (dx === 0 && dy === 0) return { x: 0, y: 0 };
-            
+
             const length = Math.sqrt(dx * dx + dy * dy);
             const perpDx = -dy / length;
             const perpDy = dx / length;
             const side = Math.random() > 0.5 ? 1 : -1;
-            
+
             return {
                 x: perpDx * distance * side,
                 y: perpDy * distance * side
@@ -197,7 +202,7 @@
                 const offset = getPerpendicularOffset(from, to, 1);
                 const textureX = to.x + offset.x + (Math.random() - 0.5);
                 const textureY = to.y + offset.y + (Math.random() - 0.5);
-                
+
                 if (Math.random() > 0.5) {
                     drawingCtx.beginPath();
                     drawingCtx.arc(textureX, textureY, 1, 0, Math.PI * 2);
@@ -225,7 +230,7 @@
                 const dust = dustParticles[i];
                 dust.update();
                 dust.draw();
-                
+
                 if (dust.life <= 0 || dust.y > canvas.height) {
                     dustParticles.splice(i, 1);
                 }
@@ -340,4 +345,5 @@
         });
     </script>
 </body>
+
 </html>
