@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>粉笔字练习软件 - 手机适配版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: "微软雅黑", Arial, sans-serif;
+            color: #ffffff;
+            padding: 10px;
+            touch-action: none; /* 禁止浏览器默认触控行为（如缩放） */
+        }
+
+        /* 响应式黑板容器：适配手机屏幕 */
+        #boardContainer {
+            position: relative;
+            padding: 15px; /* 手机端缩小边框 */
+            background: #4a3c28;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
+            /* 宽度自适应：最大800px，最小占满屏幕 */
+            width: 100%;
+            max-width: 800px;
+        }
+
+        /* 响应式画布：宽度自适应，高度按比例缩放 */
+        #chalkBoard {
+            display: block;
+            width: 100%; /* 宽度占满容器 */
+            height: auto; /* 高度自适应 */
+            aspect-ratio: 4 / 3; /* 保持 800:600 的比例 */
+            background: #14191e;
+            cursor: none !important;
+            box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        /* 粉笔指针：手机端大小适配 */
+        #chalkCursor {
+            position: absolute;
+            width: 6px;   /* 手机端缩小粉笔宽度 */
+            height: 25px; /* 手机端缩小粉笔长度 */
+            background: #f0f0e6;
+            border-radius: 0 0 2px 2px;
+            background-image: linear-gradient(90deg, 
+                transparent 0%, 
+                rgba(0,0,0,0.05) 50%, 
+                transparent 100%);
+            clip-path: polygon(15% 0, 85% 0, 100% 100%, 0 100%);
+            transform: translate(-50%, 0) rotate(-18deg);
+            pointer-events: none;
+            box-shadow: 0 0 2px rgba(240, 240, 230, 0.5);
+            opacity: 0;
+            transition: opacity 0.1s;
+            z-index: 9999;
+        }
+
+        .controls {
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.8;
+            text-align: center;
+        }
+
+        .controls span {
+            color: #f0f0e6;
+            background: #2c2c2c;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin: 0 5px;
+            display: inline-block;
+        }
+
+        /* 手机端提示文字 */
+        .mobile-tip {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div id="boardContainer">
+        <canvas id="chalkBoard" width="900" height="500"></canvas>
+        <div id="chalkCursor"></div>
+    </div>
+
+    <div class="controls">
+        操作说明：
+        <span>电脑：左键绘制 右键清屏</span>
+        <span>手机：手指绘制 长按清屏</span>
+    </div>
+    <div class="mobile-tip">手机建议横屏使用，体验更佳</div>
+
+    <script>
+        const canvas = document.getElementById('chalkBoard');
+        const ctx = canvas.getContext('2d');
+        const boardContainer = document.getElementById('boardContainer');
+        const chalkCursor = document.getElementById('chalkCursor');
+
+        // 颜色配置
+        const CHALK_WHITE = '#f0f0e6';
+        const CHALK_YELLOW = '#f5f0c8';
+        const LIGHT_CHALK = '#e1e1d7';
+
+        // 绘制参数
+        let isDrawing = false;
+        let lastPos = { x: 0, y: 0 };
+        const brushSize = 2;
+        const textureDensity = 1;
+        const dustCount = 2;
+
+        // 离屏画布：解决笔迹闪烁问题
+        const drawingCanvas = document.createElement('canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        // 离屏画布跟随主画布尺寸
+        function resizeDrawingCanvas() {
+            drawingCanvas.width = canvas.width;
+            drawingCanvas.height = canvas.height;
+            drawingCtx.fillStyle = 'rgba(0,0,0,0)';
+            drawingCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        }
+        resizeDrawingCanvas();
+
+        // 粉笔屑类
+        class ChalkDust {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.floor(Math.random() * 2) + 1;
+                this.color = Math.random() > 0.2 ? CHALK_WHITE : CHALK_YELLOW;
+                this.speedY = Math.random() * 1.5 + 1.0;
+                this.speedX = (Math.random() - 0.5) * 1.0;
+                this.gravity = 0.04;
+                this.life = Math.floor(Math.random() * 50) + 30;
+            }
+
+            update() {
+                this.speedY += this.gravity;
+                this.y += this.speedY;
+                this.x += this.speedX;
+                this.life--;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+        }
+
+        let dustParticles = [];
+
+        // 工具函数：计算线条垂直偏移
+        function getPerpendicularOffset(p1, p2, distance) {
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            if (dx === 0 && dy === 0) return { x: 0, y: 0 };
+            
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const perpDx = -dy / length;
+            const perpDy = dx / length;
+            const side = Math.random() > 0.5 ? 1 : -1;
+            
+            return {
+                x: perpDx * distance * side,
+                y: perpDy * distance * side
+            };
+        }
+
+        // 绘制线条函数
+        function drawLine(from, to) {
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(from.x, from.y);
+            drawingCtx.lineTo(to.x, to.y);
+            drawingCtx.lineWidth = brushSize;
+            drawingCtx.strokeStyle = CHALK_WHITE;
+            drawingCtx.lineCap = 'round';
+            drawingCtx.stroke();
+
+            // 添加纹理点
+            for (let i = 0; i < textureDensity; i++) {
+                const offset = getPerpendicularOffset(from, to, 1);
+                const textureX = to.x + offset.x + (Math.random() - 0.5);
+                const textureY = to.y + offset.y + (Math.random() - 0.5);
+                
+                if (Math.random() > 0.5) {
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(textureX, textureY, 1, 0, Math.PI * 2);
+                    drawingCtx.fillStyle = LIGHT_CHALK;
+                    drawingCtx.fill();
+                }
+            }
+
+            // 生成粉笔屑
+            for (let i = 0; i < dustCount; i++) {
+                dustParticles.push(new ChalkDust(to.x, to.y));
+            }
+        }
+
+        // 动画循环
+        function animate() {
+            ctx.fillStyle = '#14191e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制永久笔迹
+            ctx.drawImage(drawingCanvas, 0, 0);
+
+            // 更新粉笔屑
+            for (let i = dustParticles.length - 1; i >= 0; i--) {
+                const dust = dustParticles[i];
+                dust.update();
+                dust.draw();
+                
+                if (dust.life <= 0 || dust.y > canvas.height) {
+                    dustParticles.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+        // ========== 核心：适配鼠标+触控事件 ==========
+        // 获取相对坐标的通用函数（兼容鼠标和触控）
+        function getRelativePos(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            // 计算缩放比例（因为画布做了响应式缩放）
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        // 更新粉笔指针位置的通用函数
+        function updateChalkCursor(clientX, clientY) {
+            const rect = boardContainer.getBoundingClientRect();
+            chalkCursor.style.left = `${clientX - rect.left}px`;
+            chalkCursor.style.top = `${clientY - rect.top}px`;
+        }
+
+        // ========== 鼠标事件（电脑端） ==========
+        // 鼠标进入
+        boardContainer.addEventListener('mouseenter', (e) => {
+            chalkCursor.style.opacity = 1;
+            updateChalkCursor(e.clientX, e.clientY);
+        });
+        // 鼠标离开
+        boardContainer.addEventListener('mouseleave', () => {
+            chalkCursor.style.opacity = 0;
+            isDrawing = false;
+        });
+        // 鼠标按下
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { // 左键绘制
+                const pos = getRelativePos(e.clientX, e.clientY);
+                isDrawing = true;
+                lastPos = pos;
+                updateChalkCursor(e.clientX, e.clientY);
+            } else if (e.button === 2) { // 右键清屏
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                dustParticles = [];
+                e.preventDefault();
+            }
+        });
+        // 鼠标移动
+        canvas.addEventListener('mousemove', (e) => {
+            updateChalkCursor(e.clientX, e.clientY);
+            if (!isDrawing) return;
+            const pos = getRelativePos(e.clientX, e.clientY);
+            drawLine(lastPos, pos);
+            lastPos = pos;
+        });
+        // 鼠标松开
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+        });
+        // 阻止右键菜单
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // ========== 触控事件（手机端） ==========
+        // 触控开始（手指按下）
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // 禁止页面滚动
+            const touch = e.touches[0];
+            const pos = getRelativePos(touch.clientX, touch.clientY);
+            isDrawing = true;
+            lastPos = pos;
+            updateChalkCursor(touch.clientX, touch.clientY);
+            chalkCursor.style.opacity = 1;
+
+            // 长按清屏：2秒后触发
+            clearTimeout(longPressTimer);
+            longPressTimer = setTimeout(() => {
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                dustParticles = [];
+            }, 2000);
+        });
+
+        // 触控移动（手指滑动）
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            updateChalkCursor(touch.clientX, touch.clientY);
+            if (!isDrawing) return;
+            const pos = getRelativePos(touch.clientX, touch.clientY);
+            drawLine(lastPos, pos);
+            lastPos = pos;
+        });
+
+        // 触控结束（手指抬起）
+        canvas.addEventListener('touchend', () => {
+            isDrawing = false;
+            chalkCursor.style.opacity = 0;
+            clearTimeout(longPressTimer); // 取消长按清屏
+        });
+
+        // 长按计时器
+        let longPressTimer = null;
+
+        // ========== 响应式适配：窗口大小变化时调整 ==========
+        window.addEventListener('resize', () => {
+            resizeDrawingCanvas();
+        });
+    </script>
+</body>
+</html>

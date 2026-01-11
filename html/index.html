@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粉笔字练习软件 - 网页版</title>
+    <style>
+        /* 全局样式重置：消除默认边距和内边距 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* 页面主体样式：黑色背景，居中显示内容 */
+        body {
+            background: #0a0a0a; /* 页面背景色（深黑） */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh; /* 占满整个屏幕高度 */
+            font-family: "微软雅黑", Arial, sans-serif;
+            color: #ffffff;
+            padding: 20px;
+        }
+
+        /* 黑板容器：用于绘制立体边框 */
+        #boardContainer {
+            position: relative;
+            padding: 20px; /* 边框厚度 */
+            background: #4a3c28; /* 黑板木框颜色（深棕色） */
+            border-radius: 8px; /* 边框圆角 */
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8); /* 边框阴影，增加立体感 */
+        }
+
+        /* 画布样式：模拟黑板本体 */
+        #chalkBoard {
+            display: block; /* 消除画布默认的行内元素间隙 */
+            background: #14191e; /* 黑板底色（深灰蓝） */
+            cursor: crosshair; /* 鼠标指针改为十字准星，方便绘制 */
+            /* 黑板内部轻微阴影，模拟黑板质感 */
+            box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+        }
+
+        /* 操作说明样式 */
+        .controls {
+            margin-top: 25px;
+            font-size: 16px;
+            line-height: 1.8;
+            text-align: center;
+        }
+
+        .controls span {
+            color: #f0f0e6;
+            background: #2c2c2c;
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin: 0 8px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <!-- 黑板容器：用于包裹画布，实现立体边框效果 -->
+    <div id="boardContainer">
+        <!-- 绘制画布：核心绘制区域，800x600像素（标准黑板尺寸） -->
+        <canvas id="chalkBoard" width="900" height="500"></canvas>
+    </div>
+
+    <!-- 操作说明 -->
+    <div class="controls">
+        粉笔字练习软件 - 操作说明：
+        <span>鼠标左键：绘制粉笔字</span>
+        <span>鼠标右键：清空黑板</span>
+    </div>
+
+    <script>
+        // ===================== 核心变量初始化 =====================
+        // 获取画布元素和绘图上下文（绘图上下文是Canvas的核心，用于绘制图形）
+        const canvas = document.getElementById('chalkBoard');
+        const ctx = canvas.getContext('2d');
+
+        // -------------------- 颜色配置 --------------------
+        const CHALK_WHITE = '#f0f0e6';    // 主粉笔白色（偏暖，更真实）
+        const CHALK_YELLOW = '#f5f0c8';   // 粉笔淡黄色（纹理点缀）
+        const LIGHT_CHALK = '#e1e1d7';    // 淡粉笔色（弱化颗粒感）
+
+        // -------------------- 绘制参数配置 --------------------
+        let isDrawing = false;            // 是否正在绘制（鼠标左键按下状态）
+        let lastPos = { x: 0, y: 0 };     // 上一帧鼠标位置（用于绘制连续线条）
+        const brushSize = 2;              // 粉笔粗细（2像素，接近真实粉笔）
+        const textureDensity = 1;         // 粉笔纹理点密度（1个/帧，自然不突兀）
+        const dustCount = 2;              // 每帧生成的粉笔屑数量（2个/帧，效果自然）
+
+        // -------------------- 笔迹保存容器 --------------------
+        // 创建离屏画布：用于永久保存笔迹（避免每帧刷新覆盖）
+        const drawingCanvas = document.createElement('canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        // 离屏画布尺寸和主画布一致
+        drawingCanvas.width = canvas.width;
+        drawingCanvas.height = canvas.height;
+        // 初始化离屏画布为透明背景
+        drawingCtx.fillStyle = 'rgba(0,0,0,0)';
+        drawingCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+        // -------------------- 粉笔屑数组 --------------------
+        // 存储所有粉笔屑粒子对象，用于更新和绘制
+        let dustParticles = [];
+
+        // ===================== 粉笔屑粒子类 =====================
+        // 封装粉笔屑的属性和行为，每个粉笔屑是一个独立对象
+        class ChalkDust {
+            /**
+             * 构造函数：初始化粉笔屑属性
+             * @param {number} x - 生成位置X坐标
+             * @param {number} y - 生成位置Y坐标
+             */
+            constructor(x, y) {
+                this.x = x;                          // X坐标
+                this.y = y;                          // Y坐标
+                this.size = Math.floor(Math.random() * 2) + 1; // 尺寸：1-2像素
+                // 颜色：80%白色，20%淡黄色（模拟真实粉笔色差）
+                this.color = Math.random() > 0.2 ? CHALK_WHITE : CHALK_YELLOW;
+                this.speedY = Math.random() * 1.5 + 1.0; // 垂直下落速度：1.0-2.5
+                this.speedX = (Math.random() - 0.5) * 1.0; // 水平飘移速度：-0.5~0.5
+                this.gravity = 0.04;                 // 重力加速度（模拟下落加速）
+                this.life = Math.floor(Math.random() * 50) + 30; // 生命周期：30-80帧
+            }
+
+            /**
+             * 更新粉笔屑状态：位置、生命周期
+             */
+            update() {
+                this.speedY += this.gravity; // 重力加速
+                this.y += this.speedY;       // 更新Y坐标（下落）
+                this.x += this.speedX;       // 更新X坐标（飘移）
+                this.life--;                 // 生命周期递减
+            }
+
+            /**
+             * 绘制单个粉笔屑（圆形）
+             */
+            draw() {
+                ctx.beginPath();                          // 开始新路径（避免和其他图形连接）
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); // 绘制圆形
+                ctx.fillStyle = this.color;               // 设置粉笔屑颜色
+                ctx.fill();                               // 填充圆形
+            }
+        }
+
+        // ===================== 工具函数 =====================
+        /**
+         * 计算线条垂直偏移量：让纹理均匀分布在线条两侧
+         * @param {object} p1 - 起点 {x, y}
+         * @param {object} p2 - 终点 {x, y}
+         * @param {number} distance - 偏移距离
+         * @returns {object} 偏移量 {x, y}
+         */
+        function getPerpendicularOffset(p1, p2, distance) {
+            // 计算线条方向向量
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            
+            // 如果起点和终点重合，返回0偏移
+            if (dx === 0 && dy === 0) return { x: 0, y: 0 };
+            
+            // 计算线条长度（勾股定理）
+            const length = Math.sqrt(dx * dx + dy * dy);
+            // 计算垂直方向单位向量（垂直于线条方向）
+            const perpDx = -dy / length;
+            const perpDy = dx / length;
+            // 随机选择左侧或右侧偏移
+            const side = Math.random() > 0.5 ? 1 : -1;
+            
+            // 返回最终偏移量
+            return {
+                x: perpDx * distance * side,
+                y: perpDy * distance * side
+            };
+        }
+
+        // ===================== 绘制核心函数 =====================
+        /**
+         * 绘制连续粉笔线条（主笔迹+纹理）
+         * @param {object} from - 起点 {x, y}
+         * @param {object} to - 终点 {x, y}
+         */
+        function drawLine(from, to) {
+            // 1. 绘制主线条（保存到离屏画布，永久保留）
+            drawingCtx.beginPath();          // 开始新路径
+            drawingCtx.moveTo(from.x, from.y); // 移动到起点
+            drawingCtx.lineTo(to.x, to.y);   // 绘制到终点
+            drawingCtx.lineWidth = brushSize; // 设置线条粗细
+            drawingCtx.strokeStyle = CHALK_WHITE; // 设置线条颜色
+            drawingCtx.lineCap = 'round';    // 线条端点为圆形（避免尖锐边缘）
+            drawingCtx.stroke();             // 绘制线条（描边）
+
+            // 2. 添加粉笔纹理点（模拟真实粉笔质感）
+            for (let i = 0; i < textureDensity; i++) {
+                // 获取线条垂直方向的偏移量
+                const offset = getPerpendicularOffset(from, to, 1);
+                // 纹理点最终位置（基础位置 + 垂直偏移 + 微小随机偏移）
+                const textureX = to.x + offset.x + (Math.random() - 0.5);
+                const textureY = to.y + offset.y + (Math.random() - 0.5);
+                
+                // 50%概率绘制纹理点（减少密度，更自然）
+                if (Math.random() > 0.5) {
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(textureX, textureY, 1, 0, Math.PI * 2); // 1像素纹理点
+                    drawingCtx.fillStyle = LIGHT_CHALK; // 淡色纹理，不突兀
+                    drawingCtx.fill();
+                }
+            }
+
+            // 3. 生成粉笔屑粒子
+            for (let i = 0; i < dustCount; i++) {
+                dustParticles.push(new ChalkDust(to.x, to.y));
+            }
+        }
+
+        // ===================== 动画循环 =====================
+        /**
+         * 主动画循环：每帧执行，负责绘制和更新所有元素
+         */
+        function animate() {
+            // 1. 清空主画布（填充黑板底色）
+            ctx.fillStyle = '#14191e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 2. 绘制离屏画布中的永久笔迹
+            ctx.drawImage(drawingCanvas, 0, 0);
+
+            // 3. 更新并绘制所有粉笔屑（倒序遍历，避免删除元素导致的索引错误）
+            for (let i = dustParticles.length - 1; i >= 0; i--) {
+                const dust = dustParticles[i];
+                dust.update(); // 更新状态
+                dust.draw();   // 绘制
+                
+                // 移除生命周期结束或超出画布的粉笔屑
+                if (dust.life <= 0 || dust.y > canvas.height) {
+                    dustParticles.splice(i, 1);
+                }
+            }
+
+            // 4. 请求下一帧动画（浏览器原生API，保证流畅度）
+            requestAnimationFrame(animate);
+        }
+
+        // ===================== 事件监听 =====================
+        /**
+         * 鼠标按下事件：开始绘制/清屏
+         */
+        canvas.addEventListener('mousedown', (e) => {
+            // 获取画布在页面中的位置（用于计算鼠标相对画布的坐标）
+            const rect = canvas.getBoundingClientRect();
+            
+            // 左键按下：开始绘制
+            if (e.button === 0) {
+                isDrawing = true;
+                // 记录初始鼠标位置（相对画布）
+                lastPos = {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            } 
+            // 右键按下：清空黑板
+            else if (e.button === 2) {
+                // 清空离屏画布（笔迹）
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                // 清空粉笔屑数组
+                dustParticles = [];
+                // 阻止浏览器默认右键菜单
+                e.preventDefault();
+            }
+        });
+
+        /**
+         * 鼠标移动事件：绘制连续线条
+         */
+        canvas.addEventListener('mousemove', (e) => {
+            // 如果未按下左键，不执行绘制
+            if (!isDrawing) return;
+            
+            // 计算鼠标相对画布的当前位置
+            const rect = canvas.getBoundingClientRect();
+            const currentPos = {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+
+            // 绘制从上次位置到当前位置的线条
+            drawLine(lastPos, currentPos);
+            // 更新上次位置为当前位置（保证线条连续）
+            lastPos = currentPos;
+        });
+
+        /**
+         * 鼠标松开事件：停止绘制
+         */
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+        });
+
+        /**
+         * 鼠标离开画布事件：停止绘制（避免鼠标移出后继续绘制）
+         */
+        canvas.addEventListener('mouseleave', () => {
+            isDrawing = false;
+        });
+
+        /**
+         * 阻止画布右键菜单（避免清屏时弹出默认菜单）
+         */
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        // ===================== 初始化 =====================
+        // 启动动画循环，开始绘制
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粉笔字练习软件 - 网页版</title>
+    <style>
+        /* 全局样式重置 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: "微软雅黑", Arial, sans-serif;
+            color: #ffffff;
+            padding: 20px;
+        }
+
+        /* 黑板容器：立体边框 */
+        #boardContainer {
+            position: relative; /* 为粉笔指针提供定位参考 */
+            padding: 20px;
+            background: #4a3c28; /* 黑板木框色 */
+            border-radius: 8px;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
+        }
+
+        /* 黑板画布：隐藏默认鼠标 */
+        #chalkBoard {
+            display: block;
+            background: #14191e; /* 黑板底色 */
+            cursor: none !important; /* 隐藏系统鼠标 */
+            box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+        }
+
+        /* ========== 纯CSS绘制：上端书写+倾斜粉笔 ========== */
+        #chalkCursor {
+            position: absolute;
+            width: 8px;          /* 粉笔宽度 */
+            height: 35px;        /* 粉笔长度 */
+            background: #f0f0e6; /* 粉笔白色 */
+            border-radius: 0 0 2px 2px; /* 书写端（上端）圆角 */
+            /* 粉笔纹理：模拟粗糙质感 */
+            background-image: linear-gradient(90deg, 
+                transparent 0%, 
+                rgba(0,0,0,0.05) 50%, 
+                transparent 100%);
+            /* ========== 关键修改：上端为书写尖 ========== */
+            clip-path: polygon(
+                15% 0,    /* 左上尖点（书写端） */
+                85% 0,    /* 右上尖点（书写端） */
+                100% 100%,/* 右下 */
+                0 100%    /* 左下 */
+            );
+            /* ========== 自然倾斜角度：15度 ========== */
+            transform: translate(-50%, 0) rotate(15deg);
+            /* 防止遮挡绘制 */
+            pointer-events: none;
+            /* 粉笔阴影：增加立体感 */
+            box-shadow: 0 0 3px rgba(240, 240, 230, 0.5);
+            /* 初始隐藏 */
+            opacity: 0;
+            transition: opacity 0.1s;
+            z-index: 9999;
+        }
+
+        .controls {
+            margin-top: 25px;
+            font-size: 16px;
+            line-height: 1.8;
+            text-align: center;
+        }
+
+        .controls span {
+            color: #f0f0e6;
+            background: #2c2c2c;
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin: 0 8px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div id="boardContainer">
+        <!-- 黑板画布 -->
+        <canvas id="chalkBoard" width="800" height="600"></canvas>
+        <!-- 纯CSS绘制的粉笔指针 -->
+        <div id="chalkCursor"></div>
+    </div>
+
+    <div class="controls">
+        粉笔字练习软件 - 操作说明：
+        <span>鼠标左键：绘制粉笔字</span>
+        <span>鼠标右键：清空黑板</span>
+    </div>
+
+    <script>
+        // ===================== 核心变量初始化 =====================
+        const canvas = document.getElementById('chalkBoard');
+        const ctx = canvas.getContext('2d');
+        const boardContainer = document.getElementById('boardContainer');
+        const chalkCursor = document.getElementById('chalkCursor');
+
+        // 颜色配置
+        const CHALK_WHITE = '#f0f0e6';
+        const CHALK_YELLOW = '#f5f0c8';
+        const LIGHT_CHALK = '#e1e1d7';
+
+        // 绘制参数
+        let isDrawing = false;
+        let lastPos = { x: 0, y: 0 };
+        const brushSize = 2;
+        const textureDensity = 1;
+        const dustCount = 2;
+
+        // 离屏画布：保存笔迹
+        const drawingCanvas = document.createElement('canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        drawingCanvas.width = canvas.width;
+        drawingCanvas.height = canvas.height;
+        drawingCtx.fillStyle = 'rgba(0,0,0,0)';
+        drawingCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+        // 粉笔屑数组
+        let dustParticles = [];
+
+        // ===================== 粉笔屑粒子类 =====================
+        class ChalkDust {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.floor(Math.random() * 2) + 1;
+                this.color = Math.random() > 0.2 ? CHALK_WHITE : CHALK_YELLOW;
+                this.speedY = Math.random() * 1.5 + 1.0;
+                this.speedX = (Math.random() - 0.5) * 1.0;
+                this.gravity = 0.04;
+                this.life = Math.floor(Math.random() * 50) + 30;
+            }
+
+            update() {
+                this.speedY += this.gravity;
+                this.y += this.speedY;
+                this.x += this.speedX;
+                this.life--;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+        }
+
+        // ===================== 工具函数 =====================
+        function getPerpendicularOffset(p1, p2, distance) {
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            if (dx === 0 && dy === 0) return { x: 0, y: 0 };
+            
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const perpDx = -dy / length;
+            const perpDy = dx / length;
+            const side = Math.random() > 0.5 ? 1 : -1;
+            
+            return {
+                x: perpDx * distance * side,
+                y: perpDy * distance * side
+            };
+        }
+
+        // ===================== 绘制函数 =====================
+        function drawLine(from, to) {
+            // 绘制主线条
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(from.x, from.y);
+            drawingCtx.lineTo(to.x, to.y);
+            drawingCtx.lineWidth = brushSize;
+            drawingCtx.strokeStyle = CHALK_WHITE;
+            drawingCtx.lineCap = 'round';
+            drawingCtx.stroke();
+
+            // 添加纹理点
+            for (let i = 0; i < textureDensity; i++) {
+                const offset = getPerpendicularOffset(from, to, 1);
+                const textureX = to.x + offset.x + (Math.random() - 0.5);
+                const textureY = to.y + offset.y + (Math.random() - 0.5);
+                
+                if (Math.random() > 0.5) {
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(textureX, textureY, 1, 0, Math.PI * 2);
+                    drawingCtx.fillStyle = LIGHT_CHALK;
+                    drawingCtx.fill();
+                }
+            }
+
+            // 生成粉笔屑
+            for (let i = 0; i < dustCount; i++) {
+                dustParticles.push(new ChalkDust(to.x, to.y));
+            }
+        }
+
+        // ===================== 动画循环 =====================
+        function animate() {
+            // 清空画布
+            ctx.fillStyle = '#14191e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制永久笔迹
+            ctx.drawImage(drawingCanvas, 0, 0);
+
+            // 更新粉笔屑
+            for (let i = dustParticles.length - 1; i >= 0; i--) {
+                const dust = dustParticles[i];
+                dust.update();
+                dust.draw();
+                
+                if (dust.life <= 0 || dust.y > canvas.height) {
+                    dustParticles.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // ===================== 粉笔指针跟随逻辑 =====================
+        function updateChalkCursor(e) {
+            const rect = boardContainer.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            // 粉笔指针位置：上端（尖点）对准鼠标点击位置
+            chalkCursor.style.left = `${x}px`;
+            chalkCursor.style.top = `${y}px`;
+        }
+
+        // ===================== 事件监听 =====================
+        // 鼠标进入黑板：显示粉笔指针
+        boardContainer.addEventListener('mouseenter', () => {
+            chalkCursor.style.opacity = 1;
+        });
+
+        // 鼠标离开黑板：隐藏粉笔指针
+        boardContainer.addEventListener('mouseleave', () => {
+            chalkCursor.style.opacity = 0;
+        });
+
+        // 鼠标移动：更新粉笔指针位置 + 绘制逻辑
+        canvas.addEventListener('mousemove', (e) => {
+            updateChalkCursor(e);
+
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const currentPos = {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+
+            drawLine(lastPos, currentPos);
+            lastPos = currentPos;
+        });
+
+        // 鼠标按下：开始绘制 + 更新指针位置
+        canvas.addEventListener('mousedown', (e) => {
+            updateChalkCursor(e);
+            const rect = canvas.getBoundingClientRect();
+            
+            if (e.button === 0) { // 左键
+                isDrawing = true;
+                lastPos = {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            } else if (e.button === 2) { // 右键清屏
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                dustParticles = [];
+                e.preventDefault();
+            }
+        });
+
+        // 鼠标松开/离开：停止绘制
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isDrawing = false;
+        });
+
+        // 阻止右键菜单
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        // ===================== 初始化 =====================
+        animate();
+    </script>
+</body>
+</html>
